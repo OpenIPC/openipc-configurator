@@ -112,7 +112,7 @@ public class FirmwareTabViewModelTests
     public void CanExecuteDownloadFirmware_ReturnsFalse_IfInvalidState()
     {
         // Arrange
-        _viewModel.ManualFirmwareFile = null;
+        _viewModel.ManualLocalFirmwarePackageFile = null;
         _viewModel.SelectedManufacturer = null;
         _viewModel.SelectedDevice = null;
         _viewModel.SelectedFirmware = null;
@@ -128,7 +128,7 @@ public class FirmwareTabViewModelTests
     public void CanExecuteDownloadFirmware_ReturnsTrue_IfValidState()
     {
         // Arrange
-        _viewModel.ManualFirmwareFile = "test.tgz";
+        _viewModel.ManualLocalFirmwarePackageFile = "test.tgz";
 
         // Act
         var canExecute = _viewModel.DownloadFirmwareAsyncCommand.CanExecute(null);

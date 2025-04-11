@@ -39,23 +39,24 @@ public partial class FirmwareTabViewModel : ViewModelBase
     private CancellationTokenSource _cancellationTokenSource;
     private FirmwareData _firmwareData;
     private readonly IGitHubService _gitHubService;
-
+    private bool _bInitializedCommands = false;
+    private bool _bRecursionSelectGuard = false;
     #endregion
 
     #region Observable Properties
 
     [ObservableProperty] private bool _canConnect;
     [ObservableProperty] private bool _isConnected;
-    [ObservableProperty] private bool _isFirmwareSelected;
+    [ObservableProperty] private bool _isLocalFirmwarePackageSelected;
     [ObservableProperty] private bool _isFirmwareBySocSelected;
-    [ObservableProperty] private bool _isManufacturerSelected;
+    [ObservableProperty] private bool _isManufacturerDeviceFirmwareComboSelected;
     [ObservableProperty] private bool _canDownloadFirmware;
-    [ObservableProperty] private bool _isManualUpdateEnabled = true;
+    [ObservableProperty] private bool _isManualUpdateEnabled;
     [ObservableProperty] private string _selectedDevice;
     [ObservableProperty] private string _selectedFirmware;
     [ObservableProperty] private string _selectedFirmwareBySoc;
     [ObservableProperty] private string _selectedManufacturer;
-    [ObservableProperty] private string _manualFirmwareFile;
+    [ObservableProperty] private string _manualLocalFirmwarePackageFile;
     [ObservableProperty] private int _progressValue;
 
     #endregion
@@ -65,18 +66,18 @@ public partial class FirmwareTabViewModel : ViewModelBase
     /// <summary>
     /// Gets whether dropdowns should be enabled based on connection and firmware selection state
     /// </summary>
-    public bool CanUseDropdowns => IsConnected && !IsFirmwareSelected && !IsFirmwareBySocSelected;
+    public bool CanUseDropdowns => IsConnected;
 
     /// <summary>
     /// Gets whether soc dropdowns should be enabled based on connection and firmware selection state
     /// </summary>
-    public bool CanUseDropdownsBySoc => IsConnected && !IsManufacturerSelected;
+    public bool CanUseDropdownsBySoc => IsConnected;
 
     
     /// <summary>
     /// Gets whether firmware selection is available based on connection and manufacturer selection state
     /// </summary>
-    public bool CanUseSelectFirmware => IsConnected && !IsManufacturerSelected && !IsFirmwareBySocSelected;
+    public bool CanUseSelectLocalFirmwarePackage => IsConnected;
 
     /// <summary>
     /// Collection of available manufacturers
@@ -102,7 +103,7 @@ public partial class FirmwareTabViewModel : ViewModelBase
 
     #region Commands
 
-    public ICommand SelectFirmwareCommand { get; set; }
+    public ICommand SelectLocalFirmwarePackageCommand { get; set; }
     public ICommand PerformFirmwareUpgradeAsyncCommand { get; set; }
     public ICommand ClearFormCommand { get; set; }
     public IRelayCommand DownloadFirmwareAsyncCommand { get; set; }
@@ -124,7 +125,8 @@ public partial class FirmwareTabViewModel : ViewModelBase
         _gitHubService = gitHubService;
         _httpClient = new HttpClient();
         _sysupgradeService = new SysUpgradeService(sshClientService, logger);
-
+        _bInitializedCommands = false;
+        _bRecursionSelectGuard = false;
         InitializeProperties();
         InitializeCommands();
         SubscribeToEvents();
@@ -138,12 +140,15 @@ public partial class FirmwareTabViewModel : ViewModelBase
     {
         CanConnect = false;
         IsConnected = false;
-        IsFirmwareSelected = false;
-        IsManufacturerSelected = false;
+        IsLocalFirmwarePackageSelected = false;
+        IsManufacturerDeviceFirmwareComboSelected = false;
     }
 
     private void InitializeCommands()
     {
+        if (_bInitializedCommands)
+            return;
+        _bInitializedCommands = true;
         DownloadFirmwareAsyncCommand = new RelayCommand(
             async () => await DownloadAndPerformFirmwareUpgradeAsync(), 
             CanExecuteDownloadFirmware);
@@ -151,8 +156,8 @@ public partial class FirmwareTabViewModel : ViewModelBase
         PerformFirmwareUpgradeAsyncCommand = new RelayCommand(
             async () => await DownloadAndPerformFirmwareUpgradeAsync()); 
 
-        SelectFirmwareCommand = new RelayCommand<Window>(async window =>
-            await SelectFirmware(window));
+        SelectLocalFirmwarePackageCommand = new RelayCommand<Window>(async window =>
+            await SelectLocalFirmwarePackage(window));
 
         ClearFormCommand = new RelayCommand(ClearForm);
     }
@@ -175,8 +180,8 @@ public partial class FirmwareTabViewModel : ViewModelBase
 
         if (!IsConnected)
         {
-            IsFirmwareSelected = false;
-            IsManufacturerSelected = false;
+            IsLocalFirmwarePackageSelected = false;
+            IsManufacturerDeviceFirmwareComboSelected = false;
         }
 
         UpdateCanExecuteCommands();
@@ -185,30 +190,85 @@ public partial class FirmwareTabViewModel : ViewModelBase
     partial void OnSelectedFirmwareBySocChanged(string value)
     {
         IsFirmwareBySocSelected = !string.IsNullOrEmpty(value);
-        
+        if (_bRecursionSelectGuard)
+            return;
+        _bRecursionSelectGuard = true;
+        SelectedManufacturer = string.Empty;
+        SelectedDevice = string.Empty;
+        SelectedFirmware = string.Empty;
+        IsManufacturerDeviceFirmwareComboSelected = false;
+        ManualLocalFirmwarePackageFile = string.Empty;
+        IsLocalFirmwarePackageSelected = false;
+        _bRecursionSelectGuard = false;
         UpdateCanExecuteCommands();
     }
     
     partial void OnSelectedManufacturerChanged(string value)
     {
+        if (_bRecursionSelectGuard)
+            return;
+        _bRecursionSelectGuard = true;
         LoadDevices(value);
-        IsManufacturerSelected = !string.IsNullOrEmpty(value);
-        IsFirmwareSelected = false;
+        _bRecursionSelectGuard = false;
         UpdateCanExecuteCommands();
     }
 
     partial void OnSelectedDeviceChanged(string value)
     {
+        if (_bRecursionSelectGuard)
+            return;
+        _bRecursionSelectGuard = true;
         LoadFirmwares(value);
+        _bRecursionSelectGuard = false;
         UpdateCanExecuteCommands();
     }
 
     partial void OnSelectedFirmwareChanged(string value)
     {
+        if (_bRecursionSelectGuard)
+            return;
+        _bRecursionSelectGuard = true;
+        var manufacturer = _firmwareData?.Manufacturers
+                .FirstOrDefault(m => ((m.Name == SelectedManufacturer) || (m.FriendlyName == SelectedManufacturer)));
+
+        var device = manufacturer?.Devices
+            .FirstOrDefault(d => ((d.Name == SelectedDevice) || (d.FriendlyName == SelectedDevice)));
+
+        var firmware = device?.FirmwarePackages
+            .FirstOrDefault(f => ((f.Name == SelectedFirmware) || (f.FriendlyName == SelectedFirmware)));
+
+        var filename = string.Empty;
+
+
+        if (!string.IsNullOrEmpty(manufacturer?.Name) &&
+            !string.IsNullOrEmpty(device?.Name) &&
+            !string.IsNullOrEmpty(firmware?.Name))
+        {
+            filename = firmware.PackageFile;
+            IsManufacturerDeviceFirmwareComboSelected = true;
+            IsLocalFirmwarePackageSelected = false;
+            ManualLocalFirmwarePackageFile = string.Empty;
+        }
+        else
+        {
+            IsManufacturerDeviceFirmwareComboSelected = false;
+        }
+
+        if ((!string.IsNullOrEmpty(filename)) && FirmwareBySoc.Contains(filename))
+        {
+            SelectedFirmwareBySoc = filename;
+            IsFirmwareBySocSelected = true;
+        }
+        else
+        {
+            SelectedFirmwareBySoc = "";
+            IsFirmwareBySocSelected = false;
+        }
+        _bRecursionSelectGuard = false;
         UpdateCanExecuteCommands();
     }
 
-    partial void OnManualFirmwareFileChanged(string value)
+    partial void OnManualLocalFirmwarePackageFileChanged(string value)
     {
         UpdateCanExecuteCommands();
     }
@@ -322,10 +382,10 @@ public partial class FirmwareTabViewModel : ViewModelBase
         SelectedDevice = string.Empty;
         SelectedFirmware = string.Empty;
         SelectedFirmwareBySoc = string.Empty;
-        ManualFirmwareFile = string.Empty;
-        
-        IsFirmwareSelected = false;
-        IsManufacturerSelected = false;
+        ManualLocalFirmwarePackageFile = string.Empty;
+
+        IsLocalFirmwarePackageSelected = false;
+        IsManufacturerDeviceFirmwareComboSelected = false;
         IsManualUpdateEnabled = true;
         
         UpdateCanExecuteCommands();
@@ -337,7 +397,7 @@ public partial class FirmwareTabViewModel : ViewModelBase
                (!string.IsNullOrEmpty(SelectedManufacturer) &&
                 !string.IsNullOrEmpty(SelectedDevice) &&
                 !string.IsNullOrEmpty(SelectedFirmware)) ||
-               !string.IsNullOrEmpty(ManualFirmwareFile);
+               !string.IsNullOrEmpty(ManualLocalFirmwarePackageFile);
     }
 
     private void UpdateCanExecuteCommands()
@@ -346,12 +406,15 @@ public partial class FirmwareTabViewModel : ViewModelBase
 
         OnPropertyChanged(nameof(CanUseDropdowns));
         OnPropertyChanged(nameof(CanUseDropdownsBySoc));
-        OnPropertyChanged(nameof(CanUseSelectFirmware));
+        OnPropertyChanged(nameof(CanUseSelectLocalFirmwarePackage));
 
-
-        (DownloadFirmwareAsyncCommand as RelayCommand)?.NotifyCanExecuteChanged();
-        (PerformFirmwareUpgradeAsyncCommand as RelayCommand)?.NotifyCanExecuteChanged();
-        (SelectFirmwareCommand as RelayCommand)?.NotifyCanExecuteChanged();
+        if (IsConnected)
+        {
+            InitializeCommands();
+            (DownloadFirmwareAsyncCommand as RelayCommand)?.NotifyCanExecuteChanged();
+            (PerformFirmwareUpgradeAsyncCommand as RelayCommand)?.NotifyCanExecuteChanged();
+            (SelectLocalFirmwarePackageCommand as RelayCommand)?.NotifyCanExecuteChanged();
+        }
     }
 
     private async Task<FirmwareData> FetchFirmwareListAsync()
@@ -761,10 +824,10 @@ public partial class FirmwareTabViewModel : ViewModelBase
         {
             ProgressValue = 0;
 
-            if (!string.IsNullOrEmpty(ManualFirmwareFile))
+            if (!string.IsNullOrEmpty(ManualLocalFirmwarePackageFile))
             {
                 Logger.Information("Performing firmware upgrade using manual file.");
-                await UpgradeFirmwareFromFileAsync(ManualFirmwareFile);
+                await UpgradeFirmwareFromFileAsync(ManualLocalFirmwarePackageFile);
             }
             else if (!string.IsNullOrEmpty(SelectedFirmwareBySoc))
             {
@@ -972,13 +1035,8 @@ public partial class FirmwareTabViewModel : ViewModelBase
         }
     }
 
-    public async Task SelectFirmware(Window window)
+    public async Task SelectLocalFirmwarePackage(Window window)
     {
-        IsFirmwareSelected = true;
-        IsManufacturerSelected = false;
-
-        UpdateCanExecuteCommands();
-
         var dialog = new OpenFileDialog
         {
             Title = "Select a File",
@@ -997,7 +1055,17 @@ public partial class FirmwareTabViewModel : ViewModelBase
             var selectedFile = result[0];
             var fileName = Path.GetFileName(selectedFile);
             Console.WriteLine($"Selected File: {selectedFile}");
-            ManualFirmwareFile = selectedFile;
+            ManualLocalFirmwarePackageFile = selectedFile;
+
+            IsLocalFirmwarePackageSelected = true;
+            IsManufacturerDeviceFirmwareComboSelected = false;
+            SelectedManufacturer = string.Empty;
+            SelectedDevice = string.Empty;
+            SelectedFirmware = string.Empty;
+            SelectedFirmwareBySoc = string.Empty;
+
+
+            UpdateCanExecuteCommands();
         }
     }
 

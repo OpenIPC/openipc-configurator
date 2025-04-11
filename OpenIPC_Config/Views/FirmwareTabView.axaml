@@ -104,15 +104,15 @@
                                  Background="#F0F0F0"
                                  Width="400"
                                  Height="25"
-                                 IsEnabled="{Binding CanUseSelectFirmware}"
-                                 Text="{Binding Path=ManualFirmwareFile, Mode=TwoWay}" />
+                                 IsEnabled="{Binding CanUseSelectLocalFirmwarePackage}"
+                                 Text="{Binding Path=ManualLocalFirmwarePackageFile, Mode=TwoWay}" />
                         
                         <Button Grid.Row="0" Grid.Column="2" Content="..."
                                 Margin="5,5,0,0"
                                 VerticalAlignment="Center"
                                 Background="LightGray"
-                                IsEnabled="{Binding CanUseSelectFirmware}"
-                                Command="{Binding SelectFirmwareCommand}"
+                                IsEnabled="{Binding CanUseSelectLocalFirmwarePackage}"
+                                Command="{Binding SelectLocalFirmwarePackageCommand}"
                                 CommandParameter="{Binding RelativeSource={RelativeSource AncestorType=Window}}" />
 
                     </Grid>
